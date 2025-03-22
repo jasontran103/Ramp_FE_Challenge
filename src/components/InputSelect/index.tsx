@@ -1,7 +1,12 @@
 import Downshift from "downshift"
-import { useCallback, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import classNames from "classnames"
-import { DropdownPosition, GetDropdownPositionFn, InputSelectOnChange, InputSelectProps } from "./types"
+import {
+  DropdownPosition,
+  GetDropdownPositionFn,
+  InputSelectOnChange,
+  InputSelectProps,
+} from "./types"
 
 export function InputSelect<TItem>({
   label,
@@ -13,22 +18,45 @@ export function InputSelect<TItem>({
   loadingLabel,
 }: InputSelectProps<TItem>) {
   const [selectedValue, setSelectedValue] = useState<TItem | null>(defaultValue ?? null)
-  const [dropdownPosition, setDropdownPosition] = useState<DropdownPosition>({
-    top: 0,
-    left: 0,
-  })
+  const [dropdownPosition, setDropdownPosition] = useState<DropdownPosition>({ top: 0, left: 0 })
+  const inputRef = useRef<HTMLDivElement | null>(null)
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false)
 
   const onChange = useCallback<InputSelectOnChange<TItem>>(
     (selectedItem) => {
-      if (selectedItem === null) {
-        return
-      }
-
+      if (selectedItem === null) return
       consumerOnChange(selectedItem)
       setSelectedValue(selectedItem)
     },
     [consumerOnChange]
   )
+
+  // Update dropdown position on scroll/resize
+  useEffect(() => {
+
+    // Making sure that this logic only runs when dropdown is open
+    if (!isDropdownOpen) return
+
+    // Grabs a reference to the input element via inputRef.current 
+    const updatePosition = () => {
+      if (inputRef.current) {
+        setDropdownPosition(getDropdownPosition(inputRef.current))
+      }
+    }
+
+    // listens to scroll events so if the input movves the dropdown will follow
+    window.addEventListener("scroll", updatePosition)
+    window.addEventListener("resize", updatePosition)
+
+    // need to call this immediately 
+    updatePosition()
+
+    return () => {
+      // When the dropdown closes or componenet unmounts then it will remove the event listener to prevent memory leaks
+      window.removeEventListener("scroll", updatePosition)
+      window.removeEventListener("resize", updatePosition)
+    }
+  }, [isDropdownOpen])
 
   return (
     <Downshift<TItem>
@@ -36,6 +64,9 @@ export function InputSelect<TItem>({
       onChange={onChange}
       selectedItem={selectedValue}
       itemToString={(item) => (item ? parseItem(item).label : "")}
+      onStateChange={({ isOpen }) => {
+        setIsDropdownOpen(isOpen ?? false)
+      }}
     >
       {({
         getItemProps,
@@ -58,12 +89,13 @@ export function InputSelect<TItem>({
             <div className="RampBreak--xs" />
             <div
               className="RampInputSelect--input"
+              ref={inputRef}
               onClick={(event) => {
-                setDropdownPosition(getDropdownPosition(event.target))
+                setDropdownPosition(getDropdownPosition(event.currentTarget))
                 toggleProps.onClick(event)
               }}
             >
-              {inputValue}
+              {inputValue || parsedSelectedItem?.label || "Select..."}
             </div>
 
             <div
@@ -71,7 +103,12 @@ export function InputSelect<TItem>({
                 "RampInputSelect--dropdown-container-opened": isOpen,
               })}
               {...getMenuProps()}
-              style={{ top: dropdownPosition.top, left: dropdownPosition.left }}
+              style={{
+                top: dropdownPosition.top,
+                left: dropdownPosition.left,
+                position: "absolute",
+                zIndex: 1000,
+              }}
             >
               {renderItems()}
             </div>
@@ -79,17 +116,9 @@ export function InputSelect<TItem>({
         )
 
         function renderItems() {
-          if (!isOpen) {
-            return null
-          }
-
-          if (isLoading) {
-            return <div className="RampInputSelect--dropdown-item">{loadingLabel}...</div>
-          }
-
-          if (items.length === 0) {
-            return <div className="RampInputSelect--dropdown-item">No items</div>
-          }
+          if (!isOpen) return null
+          if (isLoading) return <div className="RampInputSelect--dropdown-item">{loadingLabel}...</div>
+          if (items.length === 0) return <div className="RampInputSelect--dropdown-item">No items</div>
 
           return items.map((item, index) => {
             const parsedItem = parseItem(item)
@@ -119,10 +148,10 @@ export function InputSelect<TItem>({
 
 const getDropdownPosition: GetDropdownPositionFn = (target) => {
   if (target instanceof Element) {
-    const { top, left } = target.getBoundingClientRect()
+    const { top, left, height } = target.getBoundingClientRect()
     const { scrollY } = window
     return {
-      top: scrollY + top + 63,
+      top: scrollY + top + height,
       left,
     }
   }
